@@ -1,0 +1,5 @@
+# Binary output
+/bin/
+
+# Coverage reports
+coverage.out
