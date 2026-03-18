@@ -17,6 +17,9 @@ type tasksClient struct {
 	task         *asana.Task
 	createdTask  *asana.Task
 	updatedTask  *asana.Task
+	stories      *asana.StoryList
+	subtasks     *asana.SubtaskList
+	attachments  *asana.AttachmentList
 	gotParams    asana.ListTasksParams
 	gotCreateReq asana.CreateTaskRequest
 	gotUpdateGID string
@@ -30,6 +33,27 @@ func (f *tasksClient) ListTasks(ctx context.Context, params asana.ListTasksParam
 
 func (f *tasksClient) GetTask(ctx context.Context, gid string) (*asana.Task, error) {
 	return f.task, nil
+}
+
+func (f *tasksClient) GetTaskStories(ctx context.Context, taskGID string) (*asana.StoryList, error) {
+	if f.stories != nil {
+		return f.stories, nil
+	}
+	return &asana.StoryList{}, nil
+}
+
+func (f *tasksClient) GetSubtasks(ctx context.Context, taskGID string) (*asana.SubtaskList, error) {
+	if f.subtasks != nil {
+		return f.subtasks, nil
+	}
+	return &asana.SubtaskList{}, nil
+}
+
+func (f *tasksClient) GetTaskAttachments(ctx context.Context, taskGID string) (*asana.AttachmentList, error) {
+	if f.attachments != nil {
+		return f.attachments, nil
+	}
+	return &asana.AttachmentList{}, nil
 }
 
 func (f *tasksClient) CreateTask(ctx context.Context, req asana.CreateTaskRequest) (*asana.Task, error) {

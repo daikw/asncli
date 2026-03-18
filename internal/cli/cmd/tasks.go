@@ -11,11 +11,14 @@ import (
 )
 
 type TasksCmd struct {
-	List   TasksListCmd   `cmd:"" help:"List tasks."`
-	Search TasksSearchCmd `cmd:"" help:"Search tasks."`
-	Get    TasksGetCmd    `cmd:"" help:"Get a task."`
-	Create TasksCreateCmd `cmd:"" help:"Create a task."`
-	Update TasksUpdateCmd `cmd:"" help:"Update a task."`
+	List        TasksListCmd        `cmd:"" help:"List tasks."`
+	Search      TasksSearchCmd      `cmd:"" help:"Search tasks."`
+	Get         TasksGetCmd         `cmd:"" help:"Get a task."`
+	Create      TasksCreateCmd      `cmd:"" help:"Create a task."`
+	Update      TasksUpdateCmd      `cmd:"" help:"Update a task."`
+	Comments    TasksCommentsCmd    `cmd:"" help:"List comments on a task."`
+	Subtasks    TasksSubtasksCmd    `cmd:"" help:"List subtasks of a task."`
+	Attachments TasksAttachmentsCmd `cmd:"" help:"List attachments on a task."`
 }
 
 type TasksListCmd struct {
@@ -89,6 +92,18 @@ type TasksGetCmd struct {
 	GID string `arg:"" help:"Task GID."`
 }
 
+type TasksCommentsCmd struct {
+	GID string `arg:"" help:"Task GID."`
+}
+
+type TasksSubtasksCmd struct {
+	GID string `arg:"" help:"Task GID."`
+}
+
+type TasksAttachmentsCmd struct {
+	GID string `arg:"" help:"Task GID."`
+}
+
 type TasksCreateCmd struct {
 	Name     string `help:"Task name." required:""`
 	Notes    string `help:"Task notes."`
@@ -116,6 +131,21 @@ type tasksSearchClient interface {
 
 type tasksGetClient interface {
 	GetTask(ctx context.Context, gid string) (*asana.Task, error)
+	GetTaskStories(ctx context.Context, taskGID string) (*asana.StoryList, error)
+	GetSubtasks(ctx context.Context, taskGID string) (*asana.SubtaskList, error)
+	GetTaskAttachments(ctx context.Context, taskGID string) (*asana.AttachmentList, error)
+}
+
+type tasksCommentsClient interface {
+	GetTaskStories(ctx context.Context, taskGID string) (*asana.StoryList, error)
+}
+
+type tasksSubtasksClient interface {
+	GetSubtasks(ctx context.Context, taskGID string) (*asana.SubtaskList, error)
+}
+
+type tasksAttachmentsClient interface {
+	GetTaskAttachments(ctx context.Context, taskGID string) (*asana.AttachmentList, error)
 }
 
 type tasksCreateClient interface {
@@ -299,6 +329,15 @@ func (cmd *TasksGetCmd) Run(ctx context.Context, c *cli.Context) error {
 	if task.Parent != nil {
 		parent = task.Parent.Name
 	}
+	// Fetch comments, subtasks, and attachments
+	stories, _ := client.GetTaskStories(ctx, cmd.GID)
+	subtaskList, _ := client.GetSubtasks(ctx, cmd.GID)
+	attachmentList, _ := client.GetTaskAttachments(ctx, cmd.GID)
+
+	comments := formatComments(stories)
+	subtasks := formatSubtasks(subtaskList)
+	attachments := formatAttachments(attachmentList)
+
 	rows := [][]string{
 		{"GID", task.GID},
 		{"Name", task.Name},
@@ -318,7 +357,10 @@ func (cmd *TasksGetCmd) Run(ctx context.Context, c *cli.Context) error {
 		{"Followers", followers},
 		{"Parent", parent},
 		{"Custom Fields", customFields},
+		{"Subtasks", subtasks},
+		{"Attachments", attachments},
 		{"Notes", task.Notes},
+		{"Comments", comments},
 	}
 	return renderer.Table([]string{"FIELD", "VALUE"}, rows)
 }
@@ -392,6 +434,138 @@ func (cmd *TasksUpdateCmd) Run(ctx context.Context, c *cli.Context) error {
 		return renderer.JSON(task)
 	}
 	return renderer.Message("updated %s\n", task.GID)
+}
+
+func (cmd *TasksCommentsCmd) Run(ctx context.Context, c *cli.Context) error {
+	clientAny := c.ClientOrDefault()
+	client, ok := clientAny.(tasksCommentsClient)
+	if !ok {
+		return fmt.Errorf("failed to list comments: client does not support listing stories")
+	}
+	stories, err := client.GetTaskStories(ctx, cmd.GID)
+	if err != nil {
+		return fmt.Errorf("failed to list comments: %w", err)
+	}
+
+	// Filter to only comments
+	comments := make([]asana.Story, 0)
+	for _, s := range stories.Data {
+		if s.Type == "comment" {
+			comments = append(comments, s)
+		}
+	}
+
+	renderer := c.RendererOrDefault()
+	if c.JSON {
+		return renderer.Envelope(comments, stories.NextPage, nil)
+	}
+
+	rows := make([][]string, 0, len(comments))
+	for _, s := range comments {
+		author := ""
+		if s.CreatedBy != nil {
+			author = s.CreatedBy.Name
+		}
+		rows = append(rows, []string{s.CreatedAt, author, s.Text})
+	}
+	return renderer.Table([]string{"DATE", "AUTHOR", "TEXT"}, rows)
+}
+
+func (cmd *TasksSubtasksCmd) Run(ctx context.Context, c *cli.Context) error {
+	clientAny := c.ClientOrDefault()
+	client, ok := clientAny.(tasksSubtasksClient)
+	if !ok {
+		return fmt.Errorf("failed to list subtasks: client does not support listing subtasks")
+	}
+	list, err := client.GetSubtasks(ctx, cmd.GID)
+	if err != nil {
+		return fmt.Errorf("failed to list subtasks: %w", err)
+	}
+
+	renderer := c.RendererOrDefault()
+	if c.JSON {
+		return renderer.Envelope(list.Data, list.NextPage, nil)
+	}
+
+	rows := make([][]string, 0, len(list.Data))
+	for _, task := range list.Data {
+		assignee := ""
+		if task.Assignee != nil {
+			assignee = task.Assignee.Name
+		}
+		rows = append(rows, []string{task.GID, task.Name, assignee, fmt.Sprintf("%t", task.Completed)})
+	}
+	return renderer.Table([]string{"GID", "NAME", "ASSIGNEE", "COMPLETED"}, rows)
+}
+
+func (cmd *TasksAttachmentsCmd) Run(ctx context.Context, c *cli.Context) error {
+	clientAny := c.ClientOrDefault()
+	client, ok := clientAny.(tasksAttachmentsClient)
+	if !ok {
+		return fmt.Errorf("failed to list attachments: client does not support listing attachments")
+	}
+	list, err := client.GetTaskAttachments(ctx, cmd.GID)
+	if err != nil {
+		return fmt.Errorf("failed to list attachments: %w", err)
+	}
+
+	renderer := c.RendererOrDefault()
+	if c.JSON {
+		return renderer.Envelope(list.Data, list.NextPage, nil)
+	}
+
+	rows := make([][]string, 0, len(list.Data))
+	for _, a := range list.Data {
+		rows = append(rows, []string{a.GID, a.Name, a.Host, a.CreatedAt})
+	}
+	return renderer.Table([]string{"GID", "NAME", "HOST", "CREATED"}, rows)
+}
+
+func formatComments(stories *asana.StoryList) string {
+	if stories == nil || len(stories.Data) == 0 {
+		return "none"
+	}
+	comments := make([]string, 0)
+	for _, s := range stories.Data {
+		if s.Type != "comment" {
+			continue
+		}
+		author := "unknown"
+		if s.CreatedBy != nil {
+			author = s.CreatedBy.Name
+		}
+		comments = append(comments, fmt.Sprintf("[%s] %s: %s", s.CreatedAt, author, s.Text))
+	}
+	if len(comments) == 0 {
+		return "none"
+	}
+	return strings.Join(comments, "\n")
+}
+
+func formatSubtasks(list *asana.SubtaskList) string {
+	if list == nil || len(list.Data) == 0 {
+		return "none"
+	}
+	items := make([]string, 0, len(list.Data))
+	for _, t := range list.Data {
+		status := "[ ]"
+		if t.Completed {
+			status = "[x]"
+		}
+		items = append(items, fmt.Sprintf("%s %s (%s)", status, t.Name, t.GID))
+	}
+	return strings.Join(items, "\n")
+}
+
+func formatAttachments(list *asana.AttachmentList) string {
+	if list == nil || len(list.Data) == 0 {
+		return "none"
+	}
+	items := make([]string, 0, len(list.Data))
+	for _, a := range list.Data {
+		items = append(items, fmt.Sprintf("%s (%s)", a.Name, a.GID))
+	}
+	return strings.Join(items, ", ")
 }
 
 func formatCustomFields(fields []asana.CustomField) string {
