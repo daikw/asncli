@@ -1,5 +1,7 @@
 # Binary output
 /bin/
+/asn
+/dist/
 
 # Coverage reports
 coverage.out

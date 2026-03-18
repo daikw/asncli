@@ -1,0 +1,80 @@
+version: 2
+
+before:
+  hooks:
+    - bash -c 'export GOPATH=$HOME/go && go mod tidy'
+    - bash -c 'export GOPATH=$HOME/go && go mod download'
+
+builds:
+  - id: asn
+    main: ./cmd/asn
+    binary: asn
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "6"
+      - "7"
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.revision={{.ShortCommit}}
+
+archives:
+  - id: default
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - '^style:'
+      - '^refactor:'
+
+brews:
+  - repository:
+      owner: daikw
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/daikw/asncli"
+    description: "Asana CLI - human-readable output by default, JSON for automation"
+    license: "MIT"
+    test: |
+      system "#{bin}/asn", "--help"
+    install: |
+      bin.install "asn"
+
+release:
+  github:
+    owner: daikw
+    name: asncli
+  prerelease: auto
+  draft: false
