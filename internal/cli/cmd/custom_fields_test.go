@@ -12,15 +12,29 @@ import (
 )
 
 type customFieldsClientStub struct {
-	list         *asana.CustomFieldList
-	gotWorkspace string
-	gotParams    asana.ListCustomFieldsParams
+	list           *asana.CustomFieldList
+	field          *asana.CustomFieldDefinition
+	updatedField   *asana.CustomFieldDefinition
+	gotWorkspace   string
+	gotParams      asana.ListCustomFieldsParams
+	gotUpdateGID   string
+	gotUpdateReq   asana.UpdateCustomFieldRequest
 }
 
 func (c *customFieldsClientStub) ListCustomFieldsForWorkspace(ctx context.Context, workspaceGID string, params asana.ListCustomFieldsParams) (*asana.CustomFieldList, error) {
 	c.gotWorkspace = workspaceGID
 	c.gotParams = params
 	return c.list, nil
+}
+
+func (c *customFieldsClientStub) GetCustomField(ctx context.Context, gid string) (*asana.CustomFieldDefinition, error) {
+	return c.field, nil
+}
+
+func (c *customFieldsClientStub) UpdateCustomField(ctx context.Context, gid string, req asana.UpdateCustomFieldRequest) (*asana.CustomFieldDefinition, error) {
+	c.gotUpdateGID = gid
+	c.gotUpdateReq = req
+	return c.updatedField, nil
 }
 
 func TestCustomFieldsListJSON(t *testing.T) {
@@ -104,5 +118,148 @@ func TestCustomFieldsListUnsupportedClient(t *testing.T) {
 	cmd := CustomFieldsListCmd{Workspace: "w1"}
 	if err := cmd.Run(context.Background(), ctx); err == nil {
 		t.Fatal("CustomFieldsListCmd.Run should return error for unsupported client type")
+	}
+}
+
+func TestCustomFieldsGetHumanReadable(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &customFieldsClientStub{field: &asana.CustomFieldDefinition{
+		GID:             "cf-1",
+		Name:            "Priority",
+		ResourceSubtype: "enum",
+		Description:     "Task priority level",
+		EnumOptions: []asana.CustomFieldEnumOption{
+			{Name: "High"},
+			{Name: "Medium"},
+			{Name: "Low"},
+		},
+	}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		Client: client,
+	}
+
+	cmd := CustomFieldsGetCmd{GID: "cf-1"}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("CustomFieldsGetCmd.Run returned unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "cf-1") || !strings.Contains(out, "Priority") || !strings.Contains(out, "enum") {
+		t.Errorf("output missing expected content\ngot: %q", out)
+	}
+	if !strings.Contains(out, "High") || !strings.Contains(out, "Medium") || !strings.Contains(out, "Low") {
+		t.Errorf("output missing enum options\ngot: %q", out)
+	}
+}
+
+func TestCustomFieldsGetJSON(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &customFieldsClientStub{field: &asana.CustomFieldDefinition{GID: "cf-json", Name: "Size"}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		JSON:   true,
+		Client: client,
+	}
+
+	cmd := CustomFieldsGetCmd{GID: "cf-json"}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("CustomFieldsGetCmd.Run returned unexpected error: %v", err)
+	}
+
+	var env cli.Envelope
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatalf("failed to unmarshal JSON output: %v", err)
+	}
+	if env.Data == nil {
+		t.Fatal("envelope data is nil, want custom field")
+	}
+}
+
+func TestCustomFieldsGetInvalidClient(t *testing.T) {
+	ctx := &cli.Context{
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		Client: struct{}{},
+	}
+
+	cmd := CustomFieldsGetCmd{GID: "cf-1"}
+	err := cmd.Run(context.Background(), ctx)
+	if err == nil {
+		t.Fatal("CustomFieldsGetCmd.Run should return error for unsupported client type")
+	}
+}
+
+func TestCustomFieldsUpdateHumanReadable(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &customFieldsClientStub{updatedField: &asana.CustomFieldDefinition{GID: "cf-upd", Name: "Updated"}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		Client: client,
+	}
+
+	cmd := CustomFieldsUpdateCmd{GID: "cf-upd", Name: "Updated"}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("CustomFieldsUpdateCmd.Run returned unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "updated") || !strings.Contains(out, "cf-upd") {
+		t.Errorf("output = %q, want to contain 'updated' and 'cf-upd'", out)
+	}
+	if client.gotUpdateGID != "cf-upd" {
+		t.Errorf("GID = %q, want %q", client.gotUpdateGID, "cf-upd")
+	}
+	if client.gotUpdateReq.Name == nil || *client.gotUpdateReq.Name != "Updated" {
+		t.Errorf("name = %v, want 'Updated'", client.gotUpdateReq.Name)
+	}
+}
+
+func TestCustomFieldsUpdateJSON(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &customFieldsClientStub{updatedField: &asana.CustomFieldDefinition{GID: "cf-json-upd", Name: "J"}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		JSON:   true,
+		Client: client,
+	}
+
+	cmd := CustomFieldsUpdateCmd{GID: "cf-json-upd", Name: "J"}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("CustomFieldsUpdateCmd.Run returned unexpected error: %v", err)
+	}
+
+	var env cli.Envelope
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatalf("failed to unmarshal JSON output: %v", err)
+	}
+	if env.Data == nil {
+		t.Fatal("envelope data is nil, want custom field")
+	}
+}
+
+func TestCustomFieldsUpdateNoFields(t *testing.T) {
+	cmd := CustomFieldsUpdateCmd{GID: "cf-1"}
+	ctx := &cli.Context{}
+	if err := cmd.Run(context.Background(), ctx); err == nil {
+		t.Fatal("CustomFieldsUpdateCmd.Run should return error when no fields specified")
+	}
+}
+
+func TestCustomFieldsUpdateInvalidClient(t *testing.T) {
+	ctx := &cli.Context{
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		Client: struct{}{},
+	}
+
+	cmd := CustomFieldsUpdateCmd{GID: "cf-1", Name: "test"}
+	err := cmd.Run(context.Background(), ctx)
+	if err == nil {
+		t.Fatal("CustomFieldsUpdateCmd.Run should return error for unsupported client type")
 	}
 }

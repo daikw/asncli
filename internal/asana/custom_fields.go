@@ -54,6 +54,36 @@ type ListCustomFieldsParams struct {
 	OptFields string
 }
 
+const CustomFieldDetailOptFields = "name,type,resource_subtype,description,enum_options.name,enum_options.color,enum_options.enabled,precision,format,currency_code,custom_label,custom_label_position"
+
+type UpdateCustomFieldRequest struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+func (c *Client) GetCustomField(ctx context.Context, gid string) (*CustomFieldDefinition, error) {
+	query := map[string]string{
+		"opt_fields": CustomFieldDetailOptFields,
+	}
+	var field CustomFieldDefinition
+	if err := c.do(ctx, http.MethodGet, "/custom_fields/"+gid, query, nil, &field); err != nil {
+		return nil, err
+	}
+	return &field, nil
+}
+
+func (c *Client) UpdateCustomField(ctx context.Context, gid string, req UpdateCustomFieldRequest) (*CustomFieldDefinition, error) {
+	query := map[string]string{
+		"opt_fields": CustomFieldDetailOptFields,
+	}
+	payload := map[string]UpdateCustomFieldRequest{"data": req}
+	var field CustomFieldDefinition
+	if err := c.do(ctx, http.MethodPut, "/custom_fields/"+gid, query, payload, &field); err != nil {
+		return nil, err
+	}
+	return &field, nil
+}
+
 func (c *Client) ListCustomFieldsForWorkspace(ctx context.Context, workspaceGID string, params ListCustomFieldsParams) (*CustomFieldList, error) {
 	query := map[string]string{}
 	if params.Limit > 0 {

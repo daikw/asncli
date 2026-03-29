@@ -31,6 +31,11 @@ type tasksClient struct {
 	gotUpdateStoryGID string
 	gotUpdateStoryReq asana.UpdateStoryRequest
 	gotDeleteStoryGID string
+	attachment        *asana.Attachment
+}
+
+func (f *tasksClient) GetAttachment(ctx context.Context, gid string) (*asana.Attachment, error) {
+	return f.attachment, nil
 }
 
 func (f *tasksClient) ListTasks(ctx context.Context, params asana.ListTasksParams) (*asana.TaskList, error) {
@@ -1068,5 +1073,74 @@ func TestTasksCommentAddTrimsWhitespace(t *testing.T) {
 
 	if client.gotCreateStoryReq.Text != "hello world" {
 		t.Errorf("text = %q, want %q", client.gotCreateStoryReq.Text, "hello world")
+	}
+}
+
+func TestTasksAttachmentGetHumanReadable(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &tasksClient{attachment: &asana.Attachment{
+		GID:         "att-1",
+		Name:        "file.png",
+		Host:        "asana",
+		CreatedAt:   "2024-01-01T00:00:00Z",
+		DownloadURL: "https://example.com/file.png",
+		ViewURL:     "https://example.com/view",
+		Parent:      &asana.TaskCompact{GID: "task-1", Name: "Parent Task"},
+	}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		Client: client,
+	}
+
+	cmd := TasksAttachmentGetCmd{GID: "att-1"}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("TasksAttachmentGetCmd.Run returned unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "att-1") || !strings.Contains(out, "file.png") || !strings.Contains(out, "Parent Task") {
+		t.Errorf("output missing expected content\ngot: %q", out)
+	}
+}
+
+func TestTasksAttachmentGetJSON(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &tasksClient{attachment: &asana.Attachment{GID: "att-json", Name: "doc.pdf"}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		JSON:   true,
+		Client: client,
+	}
+
+	cmd := TasksAttachmentGetCmd{GID: "att-json"}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("TasksAttachmentGetCmd.Run returned unexpected error: %v", err)
+	}
+
+	var env cli.Envelope
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatalf("failed to unmarshal JSON output: %v", err)
+	}
+	if env.Data == nil {
+		t.Fatal("envelope data is nil, want attachment")
+	}
+}
+
+func TestTasksAttachmentGetInvalidClient(t *testing.T) {
+	ctx := &cli.Context{
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		Client: struct{}{},
+	}
+
+	cmd := TasksAttachmentGetCmd{GID: "att-1"}
+	err := cmd.Run(context.Background(), ctx)
+	if err == nil {
+		t.Fatal("TasksAttachmentGetCmd.Run should return error for unsupported client type")
+	}
+	if !strings.Contains(err.Error(), "client does not support") {
+		t.Errorf("error = %q, want to contain 'client does not support'", err.Error())
 	}
 }
