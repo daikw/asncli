@@ -11,14 +11,18 @@ import (
 )
 
 type TasksCmd struct {
-	List        TasksListCmd        `cmd:"" help:"List tasks."`
-	Search      TasksSearchCmd      `cmd:"" help:"Search tasks."`
-	Get         TasksGetCmd         `cmd:"" help:"Get a task."`
-	Create      TasksCreateCmd      `cmd:"" help:"Create a task."`
-	Update      TasksUpdateCmd      `cmd:"" help:"Update a task."`
-	Comments    TasksCommentsCmd    `cmd:"" help:"List comments on a task."`
-	Subtasks    TasksSubtasksCmd    `cmd:"" help:"List subtasks of a task."`
-	Attachments TasksAttachmentsCmd `cmd:"" help:"List attachments on a task."`
+	List          TasksListCmd          `cmd:"" help:"List tasks."`
+	Search        TasksSearchCmd        `cmd:"" help:"Search tasks."`
+	Get           TasksGetCmd           `cmd:"" help:"Get a task."`
+	Create        TasksCreateCmd        `cmd:"" help:"Create a task."`
+	Update        TasksUpdateCmd        `cmd:"" help:"Update a task."`
+	Comments      TasksCommentsCmd      `cmd:"" help:"List comments on a task."`
+	CommentAdd    TasksCommentAddCmd    `cmd:"comment-add" help:"Add a comment to a task."`
+	CommentUpdate TasksCommentUpdateCmd `cmd:"comment-update" help:"Update a comment."`
+	CommentDelete TasksCommentDeleteCmd `cmd:"comment-delete" help:"Delete a comment."`
+	Subtasks      TasksSubtasksCmd      `cmd:"" help:"List subtasks of a task."`
+	Attachments   TasksAttachmentsCmd   `cmd:"" help:"List attachments on a task."`
+	AttachmentGet TasksAttachmentGetCmd `cmd:"attachment-get" help:"Get an attachment."`
 }
 
 type TasksListCmd struct {
@@ -104,6 +108,24 @@ type TasksAttachmentsCmd struct {
 	GID string `arg:"" help:"Task GID."`
 }
 
+type TasksAttachmentGetCmd struct {
+	GID string `arg:"" help:"Attachment GID."`
+}
+
+type TasksCommentAddCmd struct {
+	GID  string `arg:"" help:"Task GID."`
+	Text string `help:"Comment text." required:""`
+}
+
+type TasksCommentUpdateCmd struct {
+	GID  string `arg:"" help:"Comment (story) GID."`
+	Text string `help:"New comment text." required:""`
+}
+
+type TasksCommentDeleteCmd struct {
+	GID string `arg:"" help:"Comment (story) GID."`
+}
+
 type TasksCreateCmd struct {
 	Name     string `help:"Task name." required:""`
 	Notes    string `help:"Task notes."`
@@ -146,6 +168,22 @@ type tasksSubtasksClient interface {
 
 type tasksAttachmentsClient interface {
 	GetTaskAttachments(ctx context.Context, taskGID string) (*asana.AttachmentList, error)
+}
+
+type tasksAttachmentGetClient interface {
+	GetAttachment(ctx context.Context, gid string) (*asana.Attachment, error)
+}
+
+type tasksCommentAddClient interface {
+	CreateStory(ctx context.Context, taskGID string, req asana.CreateStoryRequest) (*asana.Story, error)
+}
+
+type tasksCommentUpdateClient interface {
+	UpdateStory(ctx context.Context, storyGID string, req asana.UpdateStoryRequest) (*asana.Story, error)
+}
+
+type tasksCommentDeleteClient interface {
+	DeleteStory(ctx context.Context, storyGID string) error
 }
 
 type tasksCreateClient interface {
@@ -466,9 +504,68 @@ func (cmd *TasksCommentsCmd) Run(ctx context.Context, c *cli.Context) error {
 		if s.CreatedBy != nil {
 			author = s.CreatedBy.Name
 		}
-		rows = append(rows, []string{s.CreatedAt, author, s.Text})
+		rows = append(rows, []string{s.GID, s.CreatedAt, author, s.Text})
 	}
-	return renderer.Table([]string{"DATE", "AUTHOR", "TEXT"}, rows)
+	return renderer.Table([]string{"GID", "DATE", "AUTHOR", "TEXT"}, rows)
+}
+
+func (cmd *TasksCommentAddCmd) Run(ctx context.Context, c *cli.Context) error {
+	clientAny := c.ClientOrDefault()
+	client, ok := clientAny.(tasksCommentAddClient)
+	if !ok {
+		return fmt.Errorf("failed to add comment: client does not support creating stories")
+	}
+	req := asana.CreateStoryRequest{
+		Text: strings.TrimSpace(cmd.Text),
+	}
+	story, err := client.CreateStory(ctx, cmd.GID, req)
+	if err != nil {
+		return fmt.Errorf("failed to add comment: %w", err)
+	}
+
+	renderer := c.RendererOrDefault()
+	if c.JSON {
+		return renderer.JSON(story)
+	}
+	return renderer.Message("commented %s\n", story.GID)
+}
+
+func (cmd *TasksCommentUpdateCmd) Run(ctx context.Context, c *cli.Context) error {
+	clientAny := c.ClientOrDefault()
+	client, ok := clientAny.(tasksCommentUpdateClient)
+	if !ok {
+		return fmt.Errorf("failed to update comment: client does not support updating stories")
+	}
+	req := asana.UpdateStoryRequest{
+		Text: strings.TrimSpace(cmd.Text),
+	}
+	story, err := client.UpdateStory(ctx, cmd.GID, req)
+	if err != nil {
+		return fmt.Errorf("failed to update comment: %w", err)
+	}
+
+	renderer := c.RendererOrDefault()
+	if c.JSON {
+		return renderer.JSON(story)
+	}
+	return renderer.Message("updated %s\n", story.GID)
+}
+
+func (cmd *TasksCommentDeleteCmd) Run(ctx context.Context, c *cli.Context) error {
+	clientAny := c.ClientOrDefault()
+	client, ok := clientAny.(tasksCommentDeleteClient)
+	if !ok {
+		return fmt.Errorf("failed to delete comment: client does not support deleting stories")
+	}
+	if err := client.DeleteStory(ctx, cmd.GID); err != nil {
+		return fmt.Errorf("failed to delete comment: %w", err)
+	}
+
+	renderer := c.RendererOrDefault()
+	if c.JSON {
+		return renderer.JSON(map[string]string{"gid": cmd.GID})
+	}
+	return renderer.Message("deleted %s\n", cmd.GID)
 }
 
 func (cmd *TasksSubtasksCmd) Run(ctx context.Context, c *cli.Context) error {
@@ -519,6 +616,40 @@ func (cmd *TasksAttachmentsCmd) Run(ctx context.Context, c *cli.Context) error {
 		rows = append(rows, []string{a.GID, a.Name, a.Host, a.CreatedAt})
 	}
 	return renderer.Table([]string{"GID", "NAME", "HOST", "CREATED"}, rows)
+}
+
+func (cmd *TasksAttachmentGetCmd) Run(ctx context.Context, c *cli.Context) error {
+	clientAny := c.ClientOrDefault()
+	client, ok := clientAny.(tasksAttachmentGetClient)
+	if !ok {
+		return fmt.Errorf("failed to get attachment: client does not support getting attachments")
+	}
+	attachment, err := client.GetAttachment(ctx, cmd.GID)
+	if err != nil {
+		return fmt.Errorf("failed to get attachment: %w", err)
+	}
+
+	renderer := c.RendererOrDefault()
+	if c.JSON {
+		return renderer.JSON(attachment)
+	}
+
+	parent := ""
+	if attachment.Parent != nil {
+		parent = fmt.Sprintf("%s (%s)", attachment.Parent.Name, attachment.Parent.GID)
+	}
+	rows := [][]string{
+		{"GID", attachment.GID},
+		{"Name", attachment.Name},
+		{"Host", attachment.Host},
+		{"Parent", parent},
+		{"Created", attachment.CreatedAt},
+		{"Download URL", attachment.DownloadURL},
+		{"View URL", attachment.ViewURL},
+		{"Permanent URL", attachment.PermanentURL},
+		{"Size", fmt.Sprintf("%d", attachment.Size)},
+	}
+	return renderer.Table([]string{"FIELD", "VALUE"}, rows)
 }
 
 func formatComments(stories *asana.StoryList) string {
