@@ -7,5 +7,8 @@ type Root struct {
 	Config       ConfigCmd       `cmd:"" help:"Manage configuration."`
 	CustomFields CustomFieldsCmd `cmd:"" help:"Manage custom fields."`
 	Projects     ProjectsCmd     `cmd:"" help:"Manage projects."`
+	Sections     SectionsCmd     `cmd:"" help:"Manage sections."`
 	Tasks        TasksCmd        `cmd:"" help:"Manage tasks."`
+	Users        UsersCmd        `cmd:"" help:"Manage users."`
+	Workspaces   WorkspacesCmd   `cmd:"" help:"Manage workspaces."`
 }

@@ -233,12 +233,6 @@ func (c *Client) UpdateTask(ctx context.Context, gid string, req UpdateTaskReque
 	return &task, nil
 }
 
-func (c *Client) AddTaskToSection(ctx context.Context, sectionGID string, taskGID string) error {
-	payload := map[string]map[string]string{"data": {"task": taskGID}}
-	var resp responseEnvelope
-	return c.doRaw(ctx, http.MethodPost, "/sections/"+sectionGID+"/addTask", nil, payload, &resp)
-}
-
 func (c *Client) AddFollowers(ctx context.Context, taskGID string, followers []string) (*Task, error) {
 	payload := map[string]map[string][]string{"data": {"followers": followers}}
 	var task Task
