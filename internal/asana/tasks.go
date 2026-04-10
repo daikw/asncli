@@ -126,12 +126,14 @@ type SearchTasksParams struct {
 }
 
 type CreateTaskRequest struct {
-	Name      string   `json:"name"`
-	Notes     string   `json:"notes,omitempty"`
-	Assignee  string   `json:"assignee,omitempty"`
-	Projects  []string `json:"projects,omitempty"`
-	DueOn     string   `json:"due_on,omitempty"`
-	Completed bool     `json:"completed,omitempty"`
+	Name         string            `json:"name"`
+	Notes        string            `json:"notes,omitempty"`
+	Assignee     string            `json:"assignee,omitempty"`
+	Projects     []string          `json:"projects,omitempty"`
+	Parent       string            `json:"parent,omitempty"`
+	DueOn        string            `json:"due_on,omitempty"`
+	Completed    bool              `json:"completed,omitempty"`
+	CustomFields map[string]string `json:"custom_fields,omitempty"`
 }
 
 type UpdateTaskRequest struct {
@@ -226,6 +228,30 @@ func (c *Client) UpdateTask(ctx context.Context, gid string, req UpdateTaskReque
 	payload := map[string]UpdateTaskRequest{"data": req}
 	var task Task
 	if err := c.do(ctx, http.MethodPut, "/tasks/"+gid, query, payload, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func (c *Client) AddTaskToSection(ctx context.Context, sectionGID string, taskGID string) error {
+	payload := map[string]map[string]string{"data": {"task": taskGID}}
+	var resp responseEnvelope
+	return c.doRaw(ctx, http.MethodPost, "/sections/"+sectionGID+"/addTask", nil, payload, &resp)
+}
+
+func (c *Client) AddFollowers(ctx context.Context, taskGID string, followers []string) (*Task, error) {
+	payload := map[string]map[string][]string{"data": {"followers": followers}}
+	var task Task
+	if err := c.do(ctx, http.MethodPost, "/tasks/"+taskGID+"/addFollowers", nil, payload, &task); err != nil {
+		return nil, err
+	}
+	return &task, nil
+}
+
+func (c *Client) RemoveFollowers(ctx context.Context, taskGID string, followers []string) (*Task, error) {
+	payload := map[string]map[string][]string{"data": {"followers": followers}}
+	var task Task
+	if err := c.do(ctx, http.MethodPost, "/tasks/"+taskGID+"/removeFollowers", nil, payload, &task); err != nil {
 		return nil, err
 	}
 	return &task, nil

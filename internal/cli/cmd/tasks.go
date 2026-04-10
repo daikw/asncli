@@ -11,18 +11,21 @@ import (
 )
 
 type TasksCmd struct {
-	List          TasksListCmd          `cmd:"" help:"List tasks."`
-	Search        TasksSearchCmd        `cmd:"" help:"Search tasks."`
-	Get           TasksGetCmd           `cmd:"" help:"Get a task."`
-	Create        TasksCreateCmd        `cmd:"" help:"Create a task."`
-	Update        TasksUpdateCmd        `cmd:"" help:"Update a task."`
-	Comments      TasksCommentsCmd      `cmd:"" help:"List comments on a task."`
-	CommentAdd    TasksCommentAddCmd    `cmd:"comment-add" help:"Add a comment to a task."`
-	CommentUpdate TasksCommentUpdateCmd `cmd:"comment-update" help:"Update a comment."`
-	CommentDelete TasksCommentDeleteCmd `cmd:"comment-delete" help:"Delete a comment."`
-	Subtasks      TasksSubtasksCmd      `cmd:"" help:"List subtasks of a task."`
-	Attachments   TasksAttachmentsCmd   `cmd:"" help:"List attachments on a task."`
-	AttachmentGet TasksAttachmentGetCmd `cmd:"attachment-get" help:"Get an attachment."`
+	List            TasksListCmd            `cmd:"" help:"List tasks."`
+	Search          TasksSearchCmd          `cmd:"" help:"Search tasks."`
+	Get             TasksGetCmd             `cmd:"" help:"Get a task."`
+	Create          TasksCreateCmd          `cmd:"" help:"Create a task."`
+	Update          TasksUpdateCmd          `cmd:"" help:"Update a task."`
+	Comments        TasksCommentsCmd        `cmd:"" help:"List comments on a task."`
+	CommentAdd      TasksCommentAddCmd      `cmd:"comment-add" help:"Add a comment to a task."`
+	CommentUpdate   TasksCommentUpdateCmd   `cmd:"comment-update" help:"Update a comment."`
+	CommentDelete   TasksCommentDeleteCmd   `cmd:"comment-delete" help:"Delete a comment."`
+	Subtasks        TasksSubtasksCmd        `cmd:"" help:"List subtasks of a task."`
+	Attachments     TasksAttachmentsCmd     `cmd:"" help:"List attachments on a task."`
+	AttachmentGet   TasksAttachmentGetCmd   `cmd:"attachment-get" help:"Get an attachment."`
+	Stories         TasksStoriesCmd         `cmd:"" help:"List all stories (activity log) on a task."`
+	AddFollower     TasksAddFollowerCmd     `cmd:"add-follower" help:"Add followers to a task."`
+	RemoveFollower  TasksRemoveFollowerCmd  `cmd:"remove-follower" help:"Remove followers from a task."`
 }
 
 type TasksListCmd struct {
@@ -126,12 +129,29 @@ type TasksCommentDeleteCmd struct {
 	GID string `arg:"" help:"Comment (story) GID."`
 }
 
+type TasksStoriesCmd struct {
+	GID string `arg:"" help:"Task GID."`
+}
+
+type TasksAddFollowerCmd struct {
+	GID       string   `arg:"" help:"Task GID."`
+	Followers []string `arg:"" help:"Follower GIDs to add."`
+}
+
+type TasksRemoveFollowerCmd struct {
+	GID       string   `arg:"" help:"Task GID."`
+	Followers []string `arg:"" help:"Follower GIDs to remove."`
+}
+
 type TasksCreateCmd struct {
-	Name     string `help:"Task name." required:""`
-	Notes    string `help:"Task notes."`
-	Assignee string `help:"Assignee GID or 'me'."`
-	Project  string `help:"Project GID."`
-	DueOn    string `help:"Due date (YYYY-MM-DD)."`
+	Name         string   `help:"Task name." required:""`
+	Notes        string   `help:"Task notes."`
+	Assignee     string   `help:"Assignee GID or 'me'."`
+	Project      string   `help:"Project GID."`
+	Parent       string   `help:"Parent task GID (creates a subtask)."`
+	Section      string   `help:"Section GID (adds task to section after creation)."`
+	DueOn        string   `help:"Due date (YYYY-MM-DD)."`
+	CustomFields []string `sep:"," help:"Custom field values as GID=value pairs."`
 }
 
 type TasksUpdateCmd struct {
@@ -188,10 +208,23 @@ type tasksCommentDeleteClient interface {
 
 type tasksCreateClient interface {
 	CreateTask(ctx context.Context, req asana.CreateTaskRequest) (*asana.Task, error)
+	AddTaskToSection(ctx context.Context, sectionGID string, taskGID string) error
 }
 
 type tasksUpdateClient interface {
 	UpdateTask(ctx context.Context, gid string, req asana.UpdateTaskRequest) (*asana.Task, error)
+}
+
+type tasksAddFollowerClient interface {
+	AddFollowers(ctx context.Context, taskGID string, followers []string) (*asana.Task, error)
+}
+
+type tasksRemoveFollowerClient interface {
+	RemoveFollowers(ctx context.Context, taskGID string, followers []string) (*asana.Task, error)
+}
+
+type tasksStoriesClient interface {
+	GetTaskStories(ctx context.Context, taskGID string) (*asana.StoryList, error)
 }
 
 func (cmd *TasksListCmd) Run(ctx context.Context, c *cli.Context) error {
@@ -414,14 +447,32 @@ func (cmd *TasksCreateCmd) Run(ctx context.Context, c *cli.Context) error {
 		Notes:    strings.TrimSpace(cmd.Notes),
 		Assignee: strings.TrimSpace(cmd.Assignee),
 		DueOn:    strings.TrimSpace(cmd.DueOn),
+		Parent:   strings.TrimSpace(cmd.Parent),
 	}
 	if cmd.Project != "" {
 		req.Projects = []string{cmd.Project}
+	}
+	if len(cmd.CustomFields) > 0 {
+		cf := make(map[string]string, len(cmd.CustomFields))
+		for _, kv := range cmd.CustomFields {
+			parts := strings.SplitN(kv, "=", 2)
+			if len(parts) != 2 || parts[0] == "" {
+				return fmt.Errorf("failed to parse custom field %q, want GID=value", kv)
+			}
+			cf[parts[0]] = parts[1]
+		}
+		req.CustomFields = cf
 	}
 
 	task, err := client.CreateTask(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to create task: %w", err)
+	}
+
+	if cmd.Section != "" {
+		if err := client.AddTaskToSection(ctx, cmd.Section, task.GID); err != nil {
+			return fmt.Errorf("task created (%s) but failed to add to section: %w", task.GID, err)
+		}
 	}
 
 	renderer := c.RendererOrDefault()
@@ -650,6 +701,69 @@ func (cmd *TasksAttachmentGetCmd) Run(ctx context.Context, c *cli.Context) error
 		{"Size", fmt.Sprintf("%d", attachment.Size)},
 	}
 	return renderer.Table([]string{"FIELD", "VALUE"}, rows)
+}
+
+func (cmd *TasksStoriesCmd) Run(ctx context.Context, c *cli.Context) error {
+	clientAny := c.ClientOrDefault()
+	client, ok := clientAny.(tasksStoriesClient)
+	if !ok {
+		return fmt.Errorf("failed to list stories: client does not support listing stories")
+	}
+	stories, err := client.GetTaskStories(ctx, cmd.GID)
+	if err != nil {
+		return fmt.Errorf("failed to list stories: %w", err)
+	}
+
+	renderer := c.RendererOrDefault()
+	if c.JSON {
+		return renderer.Envelope(stories.Data, stories.NextPage, nil)
+	}
+
+	rows := make([][]string, 0, len(stories.Data))
+	for _, s := range stories.Data {
+		author := ""
+		if s.CreatedBy != nil {
+			author = s.CreatedBy.Name
+		}
+		rows = append(rows, []string{s.GID, s.Type, s.CreatedAt, author, s.Text})
+	}
+	return renderer.Table([]string{"GID", "TYPE", "DATE", "AUTHOR", "TEXT"}, rows)
+}
+
+func (cmd *TasksAddFollowerCmd) Run(ctx context.Context, c *cli.Context) error {
+	clientAny := c.ClientOrDefault()
+	client, ok := clientAny.(tasksAddFollowerClient)
+	if !ok {
+		return fmt.Errorf("failed to add followers: client does not support adding followers")
+	}
+	_, err := client.AddFollowers(ctx, cmd.GID, cmd.Followers)
+	if err != nil {
+		return fmt.Errorf("failed to add followers: %w", err)
+	}
+
+	renderer := c.RendererOrDefault()
+	if c.JSON {
+		return renderer.JSON(map[string]any{"task": cmd.GID, "added": cmd.Followers})
+	}
+	return renderer.Message("added %d follower(s) to %s\n", len(cmd.Followers), cmd.GID)
+}
+
+func (cmd *TasksRemoveFollowerCmd) Run(ctx context.Context, c *cli.Context) error {
+	clientAny := c.ClientOrDefault()
+	client, ok := clientAny.(tasksRemoveFollowerClient)
+	if !ok {
+		return fmt.Errorf("failed to remove followers: client does not support removing followers")
+	}
+	_, err := client.RemoveFollowers(ctx, cmd.GID, cmd.Followers)
+	if err != nil {
+		return fmt.Errorf("failed to remove followers: %w", err)
+	}
+
+	renderer := c.RendererOrDefault()
+	if c.JSON {
+		return renderer.JSON(map[string]any{"task": cmd.GID, "removed": cmd.Followers})
+	}
+	return renderer.Message("removed %d follower(s) from %s\n", len(cmd.Followers), cmd.GID)
 }
 
 func formatComments(stories *asana.StoryList) string {

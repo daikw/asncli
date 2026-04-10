@@ -13,25 +13,31 @@ import (
 )
 
 type tasksClient struct {
-	list              *asana.TaskList
-	task              *asana.Task
-	createdTask       *asana.Task
-	updatedTask       *asana.Task
-	stories           *asana.StoryList
-	subtasks          *asana.SubtaskList
-	attachments       *asana.AttachmentList
-	createdStory      *asana.Story
-	updatedStory      *asana.Story
-	gotParams         asana.ListTasksParams
-	gotCreateReq      asana.CreateTaskRequest
-	gotUpdateGID      string
-	gotUpdateReq      asana.UpdateTaskRequest
-	gotCreateStoryGID string
-	gotCreateStoryReq asana.CreateStoryRequest
-	gotUpdateStoryGID string
-	gotUpdateStoryReq asana.UpdateStoryRequest
-	gotDeleteStoryGID string
-	attachment        *asana.Attachment
+	list                  *asana.TaskList
+	task                  *asana.Task
+	createdTask           *asana.Task
+	updatedTask           *asana.Task
+	stories               *asana.StoryList
+	subtasks              *asana.SubtaskList
+	attachments           *asana.AttachmentList
+	createdStory          *asana.Story
+	updatedStory          *asana.Story
+	gotParams             asana.ListTasksParams
+	gotCreateReq          asana.CreateTaskRequest
+	gotUpdateGID          string
+	gotUpdateReq          asana.UpdateTaskRequest
+	gotCreateStoryGID     string
+	gotCreateStoryReq     asana.CreateStoryRequest
+	gotUpdateStoryGID     string
+	gotUpdateStoryReq     asana.UpdateStoryRequest
+	gotDeleteStoryGID     string
+	attachment            *asana.Attachment
+	gotSectionGID         string
+	gotSectionTaskGID     string
+	gotAddFollowerGID     string
+	gotAddFollowers       []string
+	gotRemoveFollowerGID  string
+	gotRemoveFollowers    []string
 }
 
 func (f *tasksClient) GetAttachment(ctx context.Context, gid string) (*asana.Attachment, error) {
@@ -94,6 +100,24 @@ func (f *tasksClient) UpdateStory(ctx context.Context, storyGID string, req asan
 func (f *tasksClient) DeleteStory(ctx context.Context, storyGID string) error {
 	f.gotDeleteStoryGID = storyGID
 	return nil
+}
+
+func (f *tasksClient) AddTaskToSection(ctx context.Context, sectionGID string, taskGID string) error {
+	f.gotSectionGID = sectionGID
+	f.gotSectionTaskGID = taskGID
+	return nil
+}
+
+func (f *tasksClient) AddFollowers(ctx context.Context, taskGID string, followers []string) (*asana.Task, error) {
+	f.gotAddFollowerGID = taskGID
+	f.gotAddFollowers = followers
+	return &asana.Task{GID: taskGID}, nil
+}
+
+func (f *tasksClient) RemoveFollowers(ctx context.Context, taskGID string, followers []string) (*asana.Task, error) {
+	f.gotRemoveFollowerGID = taskGID
+	f.gotRemoveFollowers = followers
+	return &asana.Task{GID: taskGID}, nil
 }
 
 func TestTasksListJSON(t *testing.T) {
@@ -1142,5 +1166,266 @@ func TestTasksAttachmentGetInvalidClient(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "client does not support") {
 		t.Errorf("error = %q, want to contain 'client does not support'", err.Error())
+	}
+}
+
+// --- Phase 1: tasks create enhancements ---
+
+func TestTasksCreateWithParent(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &tasksClient{createdTask: &asana.Task{GID: "sub-task-1"}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		Client: client,
+	}
+
+	cmd := TasksCreateCmd{Name: "Subtask", Parent: "parent-123"}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if client.gotCreateReq.Parent != "parent-123" {
+		t.Errorf("parent = %q, want %q", client.gotCreateReq.Parent, "parent-123")
+	}
+	if !strings.Contains(buf.String(), "sub-task-1") {
+		t.Errorf("output = %q, want to contain 'sub-task-1'", buf.String())
+	}
+}
+
+func TestTasksCreateWithCustomFields(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &tasksClient{createdTask: &asana.Task{GID: "cf-task"}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		Client: client,
+	}
+
+	cmd := TasksCreateCmd{Name: "CF Task", CustomFields: []string{"123=hello", "456=world"}}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(client.gotCreateReq.CustomFields) != 2 {
+		t.Fatalf("custom_fields length = %d, want 2", len(client.gotCreateReq.CustomFields))
+	}
+	if client.gotCreateReq.CustomFields["123"] != "hello" {
+		t.Errorf("custom_fields[123] = %q, want %q", client.gotCreateReq.CustomFields["123"], "hello")
+	}
+	if client.gotCreateReq.CustomFields["456"] != "world" {
+		t.Errorf("custom_fields[456] = %q, want %q", client.gotCreateReq.CustomFields["456"], "world")
+	}
+}
+
+func TestTasksCreateWithCustomFieldsInvalid(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &tasksClient{createdTask: &asana.Task{GID: "cf-task"}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		Client: client,
+	}
+
+	cmd := TasksCreateCmd{Name: "CF Task", CustomFields: []string{"invalid-no-equals"}}
+	err := cmd.Run(context.Background(), ctx)
+	if err == nil {
+		t.Fatal("should return error for invalid custom field format")
+	}
+	if !strings.Contains(err.Error(), "failed to parse custom field") {
+		t.Errorf("error = %q, want to contain 'failed to parse custom field'", err.Error())
+	}
+}
+
+func TestTasksCreateWithSection(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &tasksClient{createdTask: &asana.Task{GID: "sec-task"}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		Client: client,
+	}
+
+	cmd := TasksCreateCmd{Name: "Section Task", Section: "section-789"}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if client.gotSectionGID != "section-789" {
+		t.Errorf("section GID = %q, want %q", client.gotSectionGID, "section-789")
+	}
+	if client.gotSectionTaskGID != "sec-task" {
+		t.Errorf("section task GID = %q, want %q", client.gotSectionTaskGID, "sec-task")
+	}
+}
+
+// --- Phase 2a: follower operations ---
+
+func TestTasksAddFollowerHumanReadable(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &tasksClient{}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		Client: client,
+	}
+
+	cmd := TasksAddFollowerCmd{GID: "task-1", Followers: []string{"user-1", "user-2"}}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if client.gotAddFollowerGID != "task-1" {
+		t.Errorf("task GID = %q, want %q", client.gotAddFollowerGID, "task-1")
+	}
+	if len(client.gotAddFollowers) != 2 || client.gotAddFollowers[0] != "user-1" {
+		t.Errorf("followers = %v, want [user-1, user-2]", client.gotAddFollowers)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "added") || !strings.Contains(out, "2") {
+		t.Errorf("output = %q, want to contain 'added' and '2'", out)
+	}
+}
+
+func TestTasksAddFollowerJSON(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &tasksClient{}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		JSON:   true,
+		Client: client,
+	}
+
+	cmd := TasksAddFollowerCmd{GID: "task-1", Followers: []string{"user-1"}}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var env cli.Envelope
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+	if env.Data == nil {
+		t.Fatal("envelope data is nil")
+	}
+}
+
+func TestTasksAddFollowerInvalidClient(t *testing.T) {
+	ctx := &cli.Context{
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		Client: struct{}{},
+	}
+
+	cmd := TasksAddFollowerCmd{GID: "task-1", Followers: []string{"user-1"}}
+	err := cmd.Run(context.Background(), ctx)
+	if err == nil {
+		t.Fatal("should return error for unsupported client type")
+	}
+}
+
+func TestTasksRemoveFollowerHumanReadable(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &tasksClient{}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		Client: client,
+	}
+
+	cmd := TasksRemoveFollowerCmd{GID: "task-1", Followers: []string{"user-1"}}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if client.gotRemoveFollowerGID != "task-1" {
+		t.Errorf("task GID = %q, want %q", client.gotRemoveFollowerGID, "task-1")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "removed") || !strings.Contains(out, "1") {
+		t.Errorf("output = %q, want to contain 'removed' and '1'", out)
+	}
+}
+
+func TestTasksRemoveFollowerInvalidClient(t *testing.T) {
+	ctx := &cli.Context{
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		Client: struct{}{},
+	}
+
+	cmd := TasksRemoveFollowerCmd{GID: "task-1", Followers: []string{"user-1"}}
+	err := cmd.Run(context.Background(), ctx)
+	if err == nil {
+		t.Fatal("should return error for unsupported client type")
+	}
+}
+
+// --- Phase 2b: stories command ---
+
+func TestTasksStoriesHumanReadable(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &tasksClient{stories: &asana.StoryList{Data: []asana.Story{
+		{GID: "s1", Type: "comment", CreatedAt: "2024-01-01T00:00:00Z", CreatedBy: &asana.User{Name: "Alice"}, Text: "hello"},
+		{GID: "s2", Type: "system", CreatedAt: "2024-01-02T00:00:00Z", CreatedBy: &asana.User{Name: "Asana"}, Text: "moved to section"},
+	}}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		Client: client,
+	}
+
+	cmd := TasksStoriesCmd{GID: "task-1"}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "comment") || !strings.Contains(out, "system") {
+		t.Errorf("output = %q, want to contain both 'comment' and 'system' types", out)
+	}
+	if !strings.Contains(out, "Alice") || !strings.Contains(out, "hello") {
+		t.Errorf("output = %q, want to contain 'Alice' and 'hello'", out)
+	}
+}
+
+func TestTasksStoriesJSON(t *testing.T) {
+	buf := &bytes.Buffer{}
+	client := &tasksClient{stories: &asana.StoryList{Data: []asana.Story{
+		{GID: "s1", Type: "comment", Text: "test"},
+	}}}
+	ctx := &cli.Context{
+		Stdout: buf,
+		Stderr: &bytes.Buffer{},
+		JSON:   true,
+		Client: client,
+	}
+
+	cmd := TasksStoriesCmd{GID: "task-1"}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var env cli.Envelope
+	if err := json.Unmarshal(buf.Bytes(), &env); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+	if env.Data == nil {
+		t.Fatal("envelope data is nil")
+	}
+}
+
+func TestTasksStoriesInvalidClient(t *testing.T) {
+	ctx := &cli.Context{
+		Stdout: &bytes.Buffer{},
+		Stderr: &bytes.Buffer{},
+		Client: struct{}{},
+	}
+
+	cmd := TasksStoriesCmd{GID: "task-1"}
+	err := cmd.Run(context.Background(), ctx)
+	if err == nil {
+		t.Fatal("should return error for unsupported client type")
 	}
 }
