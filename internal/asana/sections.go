@@ -45,6 +45,17 @@ func (c *Client) CreateSectionForProject(ctx context.Context, projectGID string,
 	return &section, nil
 }
 
+func (c *Client) GetSection(ctx context.Context, sectionGID string) (*Section, error) {
+	query := map[string]string{
+		"opt_fields": "name,project.gid,project.name",
+	}
+	var section Section
+	if err := c.do(ctx, http.MethodGet, "/sections/"+sectionGID, query, nil, &section); err != nil {
+		return nil, err
+	}
+	return &section, nil
+}
+
 type MoveTaskToSectionRequest struct {
 	Task       string `json:"task"`
 	InsertBefore string `json:"insert_before,omitempty"`

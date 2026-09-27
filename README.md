@@ -51,6 +51,10 @@ asn tasks get <task-gid>
 asn tasks create --name "Fix login bug" --project <project-gid>
 asn tasks update <task-gid> --completed=true
 
+# Move a task between sections (board columns) of a project it belongs to
+asn sections list --project <project-gid>
+asn tasks move <task-gid> --section <section-gid>
+
 # JSON output for any command
 asn auth status --json
 ```

@@ -169,3 +169,28 @@ func TestTokenSourceError(t *testing.T) {
 		t.Errorf("GetMe error = %v, want %v", err, want)
 	}
 }
+
+func TestUpdateTaskSendsCompletedFalse(t *testing.T) {
+	var raw map[string]map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{"gid": "42"}})
+	}))
+	defer server.Close()
+
+	client := NewClient(staticToken{token: "token"}, server.Client()).WithBaseURL(server.URL)
+	completed := false
+	if _, err := client.UpdateTask(context.Background(), "42", UpdateTaskRequest{Completed: &completed}); err != nil {
+		t.Fatalf("UpdateTask returned unexpected error: %v", err)
+	}
+	got, ok := raw["data"]["completed"]
+	if !ok {
+		t.Fatal(`request body has no "completed" key, want completed=false to be sent`)
+	}
+	if got != false {
+		t.Errorf("completed = %v, want false", got)
+	}
+}

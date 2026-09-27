@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -34,6 +35,7 @@ type tasksClient struct {
 	attachment            *asana.Attachment
 	gotSectionGID         string
 	gotSectionTaskGID     string
+	addSectionErr         error
 	gotAddFollowerGID     string
 	gotAddFollowers       []string
 	gotRemoveFollowerGID  string
@@ -105,7 +107,7 @@ func (f *tasksClient) DeleteStory(ctx context.Context, storyGID string) error {
 func (f *tasksClient) AddTaskToSection(ctx context.Context, sectionGID string, taskGID string) error {
 	f.gotSectionGID = sectionGID
 	f.gotSectionTaskGID = taskGID
-	return nil
+	return f.addSectionErr
 }
 
 func (f *tasksClient) AddFollowers(ctx context.Context, taskGID string, followers []string) (*asana.Task, error) {
@@ -1427,5 +1429,32 @@ func TestTasksStoriesInvalidClient(t *testing.T) {
 	err := cmd.Run(context.Background(), ctx)
 	if err == nil {
 		t.Fatal("should return error for unsupported client type")
+	}
+}
+
+func TestTasksCreateSectionFailureReportsTaskGID(t *testing.T) {
+	client := &tasksClient{createdTask: &asana.Task{GID: "new-1"}, addSectionErr: errors.New("boom")}
+	ctx := &cli.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Client: client}
+	cmd := TasksCreateCmd{Name: "x", Section: "s1"}
+	err := cmd.Run(context.Background(), ctx)
+	if err == nil || !strings.Contains(err.Error(), "new-1") {
+		t.Fatalf("error = %v, want error containing created task GID so it is not recreated", err)
+	}
+}
+
+func TestTasksGetJSONKeepsMembershipGIDs(t *testing.T) {
+	buf := &bytes.Buffer{}
+	ctx := &cli.Context{Stdout: buf, Stderr: &bytes.Buffer{}, JSON: true, Client: &tasksClient{task: &asana.Task{GID: "t1", Memberships: []asana.Membership{
+		{Project: asana.Project{GID: "p1"}, Section: asana.Section{GID: "s-todo", Name: "ToDo"}},
+	}}}}
+	cmd := TasksGetCmd{GID: "t1"}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{`"gid": "p1"`, `"gid": "s-todo"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %s: %s", want, out)
+		}
 	}
 }

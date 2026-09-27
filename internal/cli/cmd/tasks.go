@@ -16,6 +16,7 @@ type TasksCmd struct {
 	Get             TasksGetCmd             `cmd:"" help:"Get a task."`
 	Create          TasksCreateCmd          `cmd:"" help:"Create a task."`
 	Update          TasksUpdateCmd          `cmd:"" help:"Update a task."`
+	Move            TasksMoveCmd            `cmd:"" help:"Move a task to another section of a project it belongs to."`
 	Comments        TasksCommentsCmd        `cmd:"" help:"List comments on a task."`
 	CommentAdd      TasksCommentAddCmd      `cmd:"comment-add" help:"Add a comment to a task."`
 	CommentUpdate   TasksCommentUpdateCmd   `cmd:"comment-update" help:"Update a comment."`
@@ -161,6 +162,11 @@ type TasksUpdateCmd struct {
 	Assignee  string `help:"Assignee GID or 'me'."`
 	DueOn     string `help:"Due date (YYYY-MM-DD)."`
 	Completed *bool  `help:"Set completion status."`
+}
+
+type TasksMoveCmd struct {
+	GID     string `arg:"" help:"Task GID."`
+	Section string `help:"Destination section GID." required:""`
 }
 
 type tasksListClient interface {
@@ -523,6 +529,82 @@ func (cmd *TasksUpdateCmd) Run(ctx context.Context, c *cli.Context) error {
 		return renderer.JSON(task)
 	}
 	return renderer.Message("updated %s\n", task.GID)
+}
+
+type tasksMoveClient interface {
+	GetSection(ctx context.Context, gid string) (*asana.Section, error)
+	GetTask(ctx context.Context, gid string) (*asana.Task, error)
+	AddTaskToSection(ctx context.Context, sectionGID string, taskGID string) error
+}
+
+type taskMoveResult struct {
+	TaskGID        string `json:"task_gid"`
+	ProjectGID     string `json:"project_gid"`
+	FromSectionGID string `json:"from_section_gid"`
+	SectionGID     string `json:"section_gid"`
+	Status         string `json:"status"`
+}
+
+func (cmd *TasksMoveCmd) Run(ctx context.Context, c *cli.Context) error {
+	clientAny := c.ClientOrDefault()
+	client, ok := clientAny.(tasksMoveClient)
+	if !ok {
+		return fmt.Errorf("failed to move task: client does not support moving tasks")
+	}
+	taskGID := strings.TrimSpace(cmd.GID)
+	sectionGID := strings.TrimSpace(cmd.Section)
+	if taskGID == "" || sectionGID == "" {
+		return errors.New("failed to move task: task GID and --section must be non-empty")
+	}
+
+	section, err := client.GetSection(ctx, sectionGID)
+	if err != nil {
+		return fmt.Errorf("failed to move task: get section %s: %w", sectionGID, err)
+	}
+	if section.Project == nil || section.Project.GID == "" {
+		return fmt.Errorf("failed to move task: section %s has no project", sectionGID)
+	}
+	task, err := client.GetTask(ctx, taskGID)
+	if err != nil {
+		return fmt.Errorf("failed to move task: get task %s: %w", taskGID, err)
+	}
+
+	// addTask would also add the task to a project it is not in; adding to a
+	// project is a different operation, so require existing membership.
+	var from *asana.Membership
+	for i := range task.Memberships {
+		if task.Memberships[i].Project.GID == section.Project.GID {
+			from = &task.Memberships[i]
+			break
+		}
+	}
+	if from == nil {
+		return fmt.Errorf("failed to move task: task %s is not in project %s", taskGID, section.Project.GID)
+	}
+
+	result := taskMoveResult{
+		TaskGID:        taskGID,
+		ProjectGID:     section.Project.GID,
+		FromSectionGID: from.Section.GID,
+		SectionGID:     sectionGID,
+		Status:         "already_in_section",
+	}
+	// Skip the no-op call: addTask always re-inserts at the top of the section.
+	if from.Section.GID != sectionGID {
+		if err := client.AddTaskToSection(ctx, sectionGID, taskGID); err != nil {
+			return fmt.Errorf("failed to move task: %w", err)
+		}
+		result.Status = "moved"
+	}
+
+	renderer := c.RendererOrDefault()
+	if c.JSON {
+		return renderer.JSON(result)
+	}
+	if result.Status == "moved" {
+		return renderer.Message("moved %s: %s -> %s\n", taskGID, from.Section.Name, section.Name)
+	}
+	return renderer.Message("%s is already in %s\n", taskGID, section.Name)
 }
 
 func (cmd *TasksCommentsCmd) Run(ctx context.Context, c *cli.Context) error {
