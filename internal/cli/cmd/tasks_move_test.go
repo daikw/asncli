@@ -15,18 +15,24 @@ import (
 type moveClient struct {
 	section       *asana.Section
 	task          *asana.Task
+	getSectionErr error
+	getTaskErr    error
 	addErr        error
+	gotGetSection string
+	gotGetTask    string
 	addCalls      int
 	gotSectionGID string
 	gotTaskGID    string
 }
 
 func (f *moveClient) GetSection(ctx context.Context, gid string) (*asana.Section, error) {
-	return f.section, nil
+	f.gotGetSection = gid
+	return f.section, f.getSectionErr
 }
 
 func (f *moveClient) GetTask(ctx context.Context, gid string) (*asana.Task, error) {
-	return f.task, nil
+	f.gotGetTask = gid
+	return f.task, f.getTaskErr
 }
 
 func (f *moveClient) AddTaskToSection(ctx context.Context, sectionGID, taskGID string) error {
@@ -140,5 +146,67 @@ func TestTasksMoveInvalidClient(t *testing.T) {
 	cmd := TasksMoveCmd{GID: "t1", Section: "s1"}
 	if err := cmd.Run(context.Background(), ctx); err == nil {
 		t.Fatal("want error for client without move support")
+	}
+}
+
+func TestTasksMoveHumanReadableAlreadyInSection(t *testing.T) {
+	client := &moveClient{section: reviewSection(), task: boardTask("s-review")}
+	out, err := runMove(t, client, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "already in レビュー中") {
+		t.Errorf("output = %q, want already-in message", out)
+	}
+}
+
+func TestTasksMoveTrimsGIDs(t *testing.T) {
+	client := &moveClient{section: reviewSection(), task: boardTask("s-todo")}
+	ctx := &cli.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Client: client}
+	cmd := TasksMoveCmd{GID: " t1 ", Section: " s-review "}
+	if err := cmd.Run(context.Background(), ctx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if client.gotGetTask != "t1" || client.gotGetSection != "s-review" || client.gotTaskGID != "t1" || client.gotSectionGID != "s-review" {
+		t.Errorf("got task=%q/%q section=%q/%q, want trimmed GIDs", client.gotGetTask, client.gotTaskGID, client.gotGetSection, client.gotSectionGID)
+	}
+}
+
+func TestTasksMoveRejectsEmptyGIDs(t *testing.T) {
+	for _, tc := range []TasksMoveCmd{{GID: "t1", Section: " "}, {GID: "", Section: "s1"}} {
+		client := &moveClient{section: reviewSection(), task: boardTask("s-todo")}
+		ctx := &cli.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Client: client}
+		if err := tc.Run(context.Background(), ctx); err == nil {
+			t.Errorf("%+v: want error for empty GID", tc)
+		}
+		if client.gotGetSection != "" || client.gotGetTask != "" {
+			t.Errorf("%+v: API called with empty GID", tc)
+		}
+	}
+}
+
+func TestTasksMoveSectionWithoutProject(t *testing.T) {
+	client := &moveClient{section: &asana.Section{GID: "s-review"}, task: boardTask("s-todo")}
+	if _, err := runMove(t, client, true); err == nil || !strings.Contains(err.Error(), "no project") {
+		t.Fatalf("error = %v, want no-project error", err)
+	}
+	if client.addCalls != 0 {
+		t.Errorf("addTask calls = %d, want 0", client.addCalls)
+	}
+}
+
+func TestTasksMoveWrapsLookupErrors(t *testing.T) {
+	cases := map[string]*moveClient{
+		"get section": {getSectionErr: errors.New("section boom")},
+		"get task":    {section: reviewSection(), getTaskErr: errors.New("task boom")},
+	}
+	for name, client := range cases {
+		_, err := runMove(t, client, true)
+		if err == nil || !strings.Contains(err.Error(), "boom") || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s: error = %v, want wrapped lookup error", name, err)
+		}
+		if client.addCalls != 0 {
+			t.Errorf("%s: addTask calls = %d, want 0", name, client.addCalls)
+		}
 	}
 }

@@ -551,7 +551,11 @@ func (cmd *TasksMoveCmd) Run(ctx context.Context, c *cli.Context) error {
 	if !ok {
 		return fmt.Errorf("failed to move task: client does not support moving tasks")
 	}
+	taskGID := strings.TrimSpace(cmd.GID)
 	sectionGID := strings.TrimSpace(cmd.Section)
+	if taskGID == "" || sectionGID == "" {
+		return errors.New("failed to move task: task GID and --section must be non-empty")
+	}
 
 	section, err := client.GetSection(ctx, sectionGID)
 	if err != nil {
@@ -560,9 +564,9 @@ func (cmd *TasksMoveCmd) Run(ctx context.Context, c *cli.Context) error {
 	if section.Project == nil || section.Project.GID == "" {
 		return fmt.Errorf("failed to move task: section %s has no project", sectionGID)
 	}
-	task, err := client.GetTask(ctx, cmd.GID)
+	task, err := client.GetTask(ctx, taskGID)
 	if err != nil {
-		return fmt.Errorf("failed to move task: get task %s: %w", cmd.GID, err)
+		return fmt.Errorf("failed to move task: get task %s: %w", taskGID, err)
 	}
 
 	// addTask would also add the task to a project it is not in; adding to a
@@ -575,11 +579,11 @@ func (cmd *TasksMoveCmd) Run(ctx context.Context, c *cli.Context) error {
 		}
 	}
 	if from == nil {
-		return fmt.Errorf("failed to move task: task %s is not in project %s", cmd.GID, section.Project.GID)
+		return fmt.Errorf("failed to move task: task %s is not in project %s", taskGID, section.Project.GID)
 	}
 
 	result := taskMoveResult{
-		TaskGID:        cmd.GID,
+		TaskGID:        taskGID,
 		ProjectGID:     section.Project.GID,
 		FromSectionGID: from.Section.GID,
 		SectionGID:     sectionGID,
@@ -587,7 +591,7 @@ func (cmd *TasksMoveCmd) Run(ctx context.Context, c *cli.Context) error {
 	}
 	// Skip the no-op call: addTask always re-inserts at the top of the section.
 	if from.Section.GID != sectionGID {
-		if err := client.AddTaskToSection(ctx, sectionGID, cmd.GID); err != nil {
+		if err := client.AddTaskToSection(ctx, sectionGID, taskGID); err != nil {
 			return fmt.Errorf("failed to move task: %w", err)
 		}
 		result.Status = "moved"
@@ -598,9 +602,9 @@ func (cmd *TasksMoveCmd) Run(ctx context.Context, c *cli.Context) error {
 		return renderer.JSON(result)
 	}
 	if result.Status == "moved" {
-		return renderer.Message("moved %s: %s -> %s\n", cmd.GID, from.Section.Name, section.Name)
+		return renderer.Message("moved %s: %s -> %s\n", taskGID, from.Section.Name, section.Name)
 	}
-	return renderer.Message("%s is already in %s\n", cmd.GID, section.Name)
+	return renderer.Message("%s is already in %s\n", taskGID, section.Name)
 }
 
 func (cmd *TasksCommentsCmd) Run(ctx context.Context, c *cli.Context) error {
