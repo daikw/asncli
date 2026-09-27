@@ -15,11 +15,11 @@ type SectionsCmd struct {
 }
 
 type SectionsListCmd struct {
-	Project string `arg:"" help:"Project GID."`
+	Project string `help:"Project GID." required:""`
 }
 
 type SectionsCreateCmd struct {
-	Project string `arg:"" help:"Project GID."`
+	Project string `help:"Project GID." required:""`
 	Name    string `help:"Section name." required:""`
 }
 

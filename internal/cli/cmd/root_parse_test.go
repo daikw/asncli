@@ -40,4 +40,11 @@ func TestParseUpdateCompleted(t *testing.T) {
 	}
 }
 
+func TestParseSectionsListProjectFlag(t *testing.T) {
+	root := parseRoot(t, "sections", "list", "--project=p1")
+	if root.Sections.List.Project != "p1" {
+		t.Errorf("Project = %q, want p1", root.Sections.List.Project)
+	}
+}
+
 func ptr[T any](v T) *T { return &v }
