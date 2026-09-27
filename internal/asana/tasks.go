@@ -46,8 +46,9 @@ type Membership struct {
 }
 
 type Section struct {
-	GID  string `json:"gid"`
-	Name string `json:"name"`
+	GID     string   `json:"gid"`
+	Name    string   `json:"name"`
+	Project *Project `json:"project,omitempty"`
 }
 
 const TaskDetailOptFields = "name,completed,assignee.name,assignee.gid,assignee.email,notes,html_notes,due_on,due_at,start_on,start_at,created_at,modified_at,completed_at,permalink_url,projects.name,projects.gid,memberships.project.name,memberships.section.name,tags.name,tags.gid,followers.name,followers.gid,parent.name,parent.gid,custom_fields.name,custom_fields.type,custom_fields.display_value,custom_fields.text_value,custom_fields.number_value,custom_fields.enum_value.name,custom_fields.enum_value.color,custom_fields.multi_enum_values.name,custom_fields.date_value.date,custom_fields.date_value.date_time"

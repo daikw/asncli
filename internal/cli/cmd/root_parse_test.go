@@ -47,4 +47,11 @@ func TestParseSectionsListProjectFlag(t *testing.T) {
 	}
 }
 
+func TestParseTasksMove(t *testing.T) {
+	root := parseRoot(t, "tasks", "move", "t1", "--section=s1")
+	if root.Tasks.Move.GID != "t1" || root.Tasks.Move.Section != "s1" {
+		t.Errorf("move = %+v, want t1 / s1", root.Tasks.Move)
+	}
+}
+
 func ptr[T any](v T) *T { return &v }
